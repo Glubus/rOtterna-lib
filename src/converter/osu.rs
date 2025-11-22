@@ -1,4 +1,7 @@
 use crate::structs::{SmFile, OsuSettings, Chart};
+
+// StepMania row system constants (must match decode.rs)
+const ROWS_PER_BEAT: f64 = 48.0;  // 1 beat = 48 rows (for 4/4 time)
 pub fn create_basic_osu(sm_file: &SmFile, chart: &Chart, settings: &OsuSettings) -> Result<String, String> {
     // This is a placeholder - should use rosu-map instead
     let mut osu = String::new();
@@ -81,18 +84,18 @@ pub fn create_basic_osu(sm_file: &SmFile, chart: &Chart, settings: &OsuSettings)
         osu.push_str(&format!("{},{},4,2,0,100,1,0\n", offset_ms, 500.0)); // 120 BPM = 500ms per beat
     } else {
         // Generate a timing point for each BPM change
-        // bpm_time is in BEATS, not seconds!
-        // We need to convert beats to seconds based on the BPM before this change
+        // BPMs are stored as (row, bpm) pairs, need to convert rows to beats and then to time
         let mut current_time_ms = 0.0;
-        let mut current_beat = 0.0;
+        let mut current_row = 0.0;
         let mut current_bpm = sm_file.bpms[0].1;
         
-        for (idx, (bpm_beat, bpm)) in sm_file.bpms.iter().enumerate() {
+        for (idx, (bpm_row, bpm)) in sm_file.bpms.iter().enumerate() {
             // Calculate time elapsed from previous BPM change
             if idx > 0 {
-                let beats_elapsed = bpm_beat - current_beat;
-                let seconds_elapsed = (beats_elapsed / current_bpm) * 60.0;
-                current_time_ms += seconds_elapsed * 1000.0;
+                let rows_elapsed = bpm_row - current_row;
+                let beats_elapsed = rows_elapsed / ROWS_PER_BEAT;
+                let time_elapsed_ms = (beats_elapsed / current_bpm) * 60000.0;
+                current_time_ms += time_elapsed_ms;
             }
             
             // Apply offset: timing point starts at offset + calculated time
@@ -101,8 +104,11 @@ pub fn create_basic_osu(sm_file: &SmFile, chart: &Chart, settings: &OsuSettings)
             // Calculate beat duration in milliseconds (60000ms / BPM)
             let beat_duration_ms = 60000.0 / bpm;
             
-            println!("[create_basic_osu] BPM change at beat {} ({}ms): {} BPM ({}ms per beat)", 
-                bpm_beat, time_ms, bpm, beat_duration_ms);
+            // Convert row to beat for display
+            let bpm_beat = bpm_row / ROWS_PER_BEAT;
+            
+            println!("[create_basic_osu] BPM change at row {} (beat {}) ({}ms): {} BPM ({}ms per beat)", 
+                bpm_row, bpm_beat, time_ms, bpm, beat_duration_ms);
             
              // Format: time,beatLength,meter,sampleSet,sampleIndex,volume,uninherited,effects
              // uninherited = 1 means this is a timing point (not inherited)
@@ -110,7 +116,7 @@ pub fn create_basic_osu(sm_file: &SmFile, chart: &Chart, settings: &OsuSettings)
             osu.push_str(&format!("{},{},4,2,0,100,1,0\n", time_ms, beat_duration_ms));
             
             // Update for next iteration
-            current_beat = *bpm_beat;
+            current_row = *bpm_row;
             current_bpm = *bpm;
         }
     }

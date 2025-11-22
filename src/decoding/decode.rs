@@ -3,6 +3,10 @@ use crate::structs::SmFile;
 use crate::utils::{parse_field, parse_pairs};
 use std::path::PathBuf;
 
+// StepMania row system constants
+const ROWS_PER_BEAT: f64 = 48.0;  // 1 beat = 48 rows (for 4/4 time)
+const ROWS_PER_MEASURE: f64 = 192.0;  // 1 measure = 192 rows (4 beats * 48)
+
 impl SmFile {
     pub fn from_file(path: PathBuf) -> Result<SmFile, String> {
         let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
@@ -26,22 +30,38 @@ impl SmFile {
     }
 
     fn parse_bpms(&mut self, content: &str) {
-        // 1. Utilisation de la fonction générique pour remplir le vecteur
+        // Parse BPM pairs from the file
+        // Format: #BPMS:beat1=bpm1,beat2=bpm2,...;
         parse_pairs(content, r"(?s)#BPMS:(.*?);", &mut self.bpms);
 
-        // 2. Tri (Sort) par beat (le premier élément du tuple)
+        // Convert beats to rows (1 beat = 48 rows in StepMania)
+        // Store as (row, bpm) instead of (beat, bpm)
+        for (beat, _bpm) in &mut self.bpms {
+            *beat = *beat * ROWS_PER_BEAT;
+        }
+
+        // Sort by row (first element of tuple)
         self.bpms
             .sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
-        // 3. Gestion de la valeur par défaut si vide
-        if self.bpms.is_empty() {
-            self.bpms.push((0.0, 120.0));
+        // Ensure we have at least one BPM change at row 0
+        if self.bpms.is_empty() || self.bpms[0].0 > 0.0 {
+            self.bpms.insert(0, (0.0, 120.0));
         }
     }
 
     fn parse_stops(&mut self, content: &str) {
+        // Parse stop pairs from the file
+        // Format: #STOPS:beat1=duration1,beat2=duration2,...;
         parse_pairs(content, r"(?s)#STOPS:(.*?);", &mut self.stops);
 
+        // Convert beats to rows (1 beat = 48 rows in StepMania)
+        // Store as (row, duration) instead of (beat, duration)
+        for (beat, _duration) in &mut self.stops {
+            *beat = *beat * ROWS_PER_BEAT;
+        }
+
+        // Sort by row (first element of tuple)
         self.stops
             .sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
     }
@@ -71,30 +91,29 @@ impl Chart {
         let mut idx = chart.parse_header(&lines);
     
         // Parse measures
-        // Timing state
+        // Timing state - using row-based system
         let mut current_bpm = if bpms.is_empty() { 120.0 } else { bpms[0].1 };
         let mut current_time_ms = 0.0; // Time in MILLISECONDS
-        let mut current_beat = 0.0; // Position in beats
+        let mut current_row = 0.0; // Position in rows (not beats!)
         let mut bpm_index = 0;
 
         while idx < lines.len() {
-            // Check if BPM changes before this measure
-            update_bpm_if_needed(&mut current_bpm, current_beat, &mut bpm_index, bpms);
-
-            // Parse next measure (it will calculate timings internally)
-            let (measure, next_idx, new_time_ms, new_beat) = Measure::parse(
+            // Parse next measure (it will handle BPM changes internally)
+            let (measure, next_idx, new_time_ms, new_row) = Measure::parse(
                 &lines, 
                 idx, 
-                current_bpm, 
+                bpms,
+                &mut current_bpm,
+                &mut bpm_index,
                 current_time_ms, 
-                current_beat
+                current_row
             );
             
             // Always add measure, even if empty (empty measures represent time)
             chart.measures.push(measure);
 
             current_time_ms = new_time_ms;
-            current_beat = new_beat;
+            current_row = new_row;
             idx = next_idx;
 
             // Check if we hit a semicolon (end of chart)
@@ -180,14 +199,17 @@ impl Measure {
     fn parse(
         lines: &[&str], 
         start_idx: usize, 
-        bpm: f64, 
+        bpms: &[(f64, f64)],  // (row, bpm) pairs
+        current_bpm: &mut f64,
+        bpm_index: &mut usize,
         start_time_ms: f64, 
-        start_beat: f64,
+        start_row: f64,
     ) -> (Measure, usize, f64, f64) {
         let mut measure = Measure::new();
         let mut idx = start_idx;
 
         // Parse lines until we hit a comma or semicolon
+        let mut note_lines = Vec::new();
         while idx < lines.len() {
             let line = lines[idx].trim();
 
@@ -206,74 +228,135 @@ impl Measure {
 
             // Check if line is a measure separator (comma or semicolon)
             if line_without_comment == "," || line_without_comment == ";" {
-                // End of measure - calculate timings for all beats
-                let beats_in_measure = measure.beats.len();
-                
-                // If measure is empty, assume it has 4 beats (standard measure length)
-                let actual_beats = if beats_in_measure == 0 { 4 } else { beats_in_measure };
-                
-                measure.start_time = start_time_ms;
-                
-                // Calculate time per beat in MILLISECONDS
-                // A measure always represents 4 beats of music in StepMania
-                // Formula: time_per_beat_ms = (60000 / BPM * 4) / beats_in_measure
-                // This divides the total measure time (4 beats of music) by the number of lines
-                let beats_in_measure_f64 = actual_beats as f64;
-                let measure_duration_ms = (60000.0 / bpm) * 4.0; // 4 beats of music per measure
-                let time_per_beat_ms = measure_duration_ms / beats_in_measure_f64;
-
-                // Update each beat with timing (if any)
-                let mut current_time = start_time_ms;
-                let mut current_beat = start_beat;
-                for beat in measure.beats.iter_mut() {
-                    beat.time = current_time;
-                    current_time += time_per_beat_ms;
-                    current_beat += 1.0;
-                }
-                
-                // Advance time even if measure is empty (empty measures still take time)
-                let new_time = start_time_ms + (time_per_beat_ms * actual_beats as f64);
-                let new_beat = start_beat + actual_beats as f64;
-
-                return (measure, idx + 1, new_time, new_beat);
+                break;
             } else if Beat::is_note_line(line_without_comment) {
-                // Parse note line using Beat::parse()
-                let beat = Beat::parse(line_without_comment);
-                measure.beats.push(beat);
+                // Store note lines for later processing
+                note_lines.push(line_without_comment);
             }
 
             idx += 1;
         }
 
-        // End of file - calculate timings for all beats
-        let beats_in_measure = measure.beats.len();
-        
-        // If measure is empty, assume it has 4 beats (standard measure length)
-        let actual_beats = if beats_in_measure == 0 { 4 } else { beats_in_measure };
-        
+        // Calculate quantization (rows per note line)
+        // A measure has 192 rows total
+        let num_lines = note_lines.len();
+        let quantization = if num_lines > 0 {
+            // Determine quantization by checking if measure uses full 192 rows
+            if num_lines == ROWS_PER_MEASURE as usize {
+                // Full 192-row measure - check for custom quantization
+                // Try to find the smallest valid quantization
+                let mut found_quant = ROWS_PER_MEASURE as usize;
+                for test_quant in [4, 8, 12, 16, 24, 32, 48, 64, 96] {
+                    if ROWS_PER_MEASURE as usize % test_quant == 0 {
+                        // For now, accept the first valid quantization
+                        // A more sophisticated check would verify that compressed rows are empty
+                        found_quant = test_quant;
+                        break;
+                    }
+                }
+                found_quant
+            } else if num_lines > 0 {
+                // Calculate quantization from number of lines
+                ROWS_PER_MEASURE as usize / num_lines
+            } else {
+                ROWS_PER_MEASURE as usize
+            }
+        } else {
+            ROWS_PER_MEASURE as usize
+        };
+
+        // Process note lines and calculate timings
         measure.start_time = start_time_ms;
-        
-        // Calculate time per beat in MILLISECONDS
-        // A measure always represents 4 beats of music in StepMania
-        // Formula: time_per_beat_ms = (60000 / BPM * 4) / beats_in_measure
-        let beats_in_measure_f64 = actual_beats as f64;
-        let measure_duration_ms = (60000.0 / bpm) * 4.0; // 4 beats of music per measure
-        let time_per_beat_ms = measure_duration_ms / beats_in_measure_f64;
-
-        // Update each beat with timing (if any)
         let mut current_time = start_time_ms;
-        let mut current_beat = start_beat;
-        for beat in measure.beats.iter_mut() {
-            beat.time = current_time;
-            current_time += time_per_beat_ms;
-            current_beat += 1.0;
-        }
-        
-        // Advance time even if measure is empty (empty measures still take time)
-        let new_time = start_time_ms + (time_per_beat_ms * actual_beats as f64);
-        let new_beat = start_beat + actual_beats as f64;
+        let mut current_row = start_row;
 
-        (measure, idx, new_time, new_beat)
+        for (line_idx, line) in note_lines.iter().enumerate() {
+            // Calculate row position for this note line
+            let row_offset = if num_lines > 0 {
+                // Handle quantization
+                if ROWS_PER_MEASURE as usize % num_lines == 0 {
+                    (line_idx * quantization) as f64
+                } else {
+                    // Non-uniform spacing
+                    (ROWS_PER_MEASURE as f64 / num_lines as f64) * line_idx as f64
+                }
+            } else {
+                0.0
+            };
+
+            let note_row = start_row + row_offset;
+
+            // Check for BPM changes up to this row
+            while *bpm_index < bpms.len() {
+                let (bpm_row, new_bpm) = bpms[*bpm_index];
+                if bpm_row <= note_row {
+                    // Calculate time elapsed from previous position to this BPM change
+                    if bpm_row > current_row {
+                        let rows_elapsed = bpm_row - current_row;
+                        let beats_elapsed = rows_elapsed / ROWS_PER_BEAT;
+                        let time_elapsed_ms = (beats_elapsed / *current_bpm) * 60000.0;
+                        current_time += time_elapsed_ms;
+                        current_row = bpm_row;
+                    }
+                    *current_bpm = new_bpm;
+                    *bpm_index += 1;
+                } else {
+                    break;
+                }
+            }
+
+            // Calculate time for this note line
+            if note_row > current_row {
+                let rows_elapsed = note_row - current_row;
+                let beats_elapsed = rows_elapsed / ROWS_PER_BEAT;
+                let time_elapsed_ms = (beats_elapsed / *current_bpm) * 60000.0;
+                current_time += time_elapsed_ms;
+                current_row = note_row;
+            }
+
+            // Parse and store the beat
+            let mut beat = Beat::parse(line);
+            beat.time = current_time;
+            measure.beats.push(beat);
+        }
+
+        // Calculate final row and time for the end of the measure
+        let end_row = start_row + ROWS_PER_MEASURE;
+        
+        // Check for any remaining BPM changes before end of measure
+        while *bpm_index < bpms.len() {
+            let (bpm_row, new_bpm) = bpms[*bpm_index];
+            if bpm_row < end_row {
+                // Calculate time elapsed to this BPM change
+                if bpm_row > current_row {
+                    let rows_elapsed = bpm_row - current_row;
+                    let beats_elapsed = rows_elapsed / ROWS_PER_BEAT;
+                    let time_elapsed_ms = (beats_elapsed / *current_bpm) * 60000.0;
+                    current_time += time_elapsed_ms;
+                    current_row = bpm_row;
+                }
+                *current_bpm = new_bpm;
+                *bpm_index += 1;
+            } else {
+                break;
+            }
+        }
+
+        // Calculate time from current position to end of measure
+        if end_row > current_row {
+            let rows_elapsed = end_row - current_row;
+            let beats_elapsed = rows_elapsed / ROWS_PER_BEAT;
+            let time_elapsed_ms = (beats_elapsed / *current_bpm) * 60000.0;
+            current_time += time_elapsed_ms;
+        }
+
+        let next_idx = if idx < lines.len() && (lines[idx].trim() == "," || lines[idx].trim() == ";") {
+            idx + 1
+        } else {
+            idx
+        };
+
+        (measure, next_idx, current_time, end_row)
     }
 }
 
@@ -292,19 +375,3 @@ impl Beat {
     }
 }
 
-fn update_bpm_if_needed(
-    current_bpm: &mut f64,
-    current_beat: f64,
-    bpm_index: &mut usize,
-    bpms: &[(f64, f64)],
-) {
-    while *bpm_index < bpms.len() {
-        let (bpm_beat, new_bpm) = bpms[*bpm_index];
-        if bpm_beat <= current_beat {
-            *current_bpm = new_bpm;
-            *bpm_index += 1;
-        } else {
-            break;
-        }
-    }
-}

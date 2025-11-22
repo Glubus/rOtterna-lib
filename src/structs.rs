@@ -3,8 +3,8 @@ use crate::utils::parse_field;
 pub struct SmFile {
     pub metadata: Metadata,
     pub offset: f64, // Time in MILLISECONDS
-    pub bpms: Vec<(f64, f64)>,  // (beat, bpm)
-    pub stops: Vec<(f64, f64)>, // (beat, duration)
+    pub bpms: Vec<(f64, f64)>,  // (row, bpm) - row position and BPM value
+    pub stops: Vec<(f64, f64)>, // (row, duration) - row position and duration in seconds
     pub charts: Vec<Chart>,
 }
 
