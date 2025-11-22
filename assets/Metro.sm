@@ -1,0 +1,132 @@
+#TITLE:100 BPM Metronome;
+#SUBTITLE:For your justice quad needs;
+#ARTIST:ArrowVortex;
+#TITLETRANSLIT:;
+#SUBTITLETRANSLIT:;
+#ARTISTTRANSLIT:;
+#GENRE:;
+#CREDIT:D2Enthusiast;
+#MUSIC:Metro.ogg;
+#BANNER:BN.png;
+#BACKGROUND:BG.jpg;
+#CDTITLE:cdtitle.png;
+#SAMPLESTART:0.322;
+#SAMPLELENGTH:9.000;
+#SELECTABLE:YES;
+#OFFSET:0.278;
+#BPMS:0.000=100.000;
+#STOPS:;
+#BGCHANGES:;
+#FGCHANGES:;
+//--------------- dance-single -  ----------------
+#NOTES:
+     dance-single:
+     :
+     Beginner:
+     1:
+     0,0,0,0,0:
+0000
+0000
+0000
+0000
+,
+0010
+0000
+0000
+0000
+;
+//--------------- dance-single -  ----------------
+#NOTES:
+     dance-single:
+     :
+     Easy:
+     2:
+     0,0,0,0,0:
+0000
+0000
+0000
+0000
+,
+0010
+0010
+0000
+0000
+;
+//--------------- dance-single -  ----------------
+#NOTES:
+     dance-single:
+     :
+     Medium:
+     3:
+     0,0,0,0,0:
+0000
+0000
+0000
+0000
+,
+0010
+0010
+0010
+0000
+;
+//--------------- dance-single -  ----------------
+#NOTES:
+     dance-single:
+     :
+     Hard:
+     4:
+     0,0,0,0,0:
+0000
+0000
+0000
+0000
+,
+0010
+0010
+0010
+0010
+;
+//--------------- dance-single -  ----------------
+#NOTES:
+     dance-single:
+     :
+     Challenge:
+     5:
+     0,0,0,0,0:
+0000
+0000
+0000
+0000
+,
+0010
+0010
+0010
+0010
+,
+0010
+0000
+0000
+0000
+;
+//--------------- dance-single -  ----------------
+#NOTES:
+     dance-single:
+     :
+     Edit:
+     6:
+     0,0,0,0,0:
+0000
+0000
+0000
+0000
+,
+0010
+0010
+0010
+0010
+,
+0010
+0010
+0000
+0000
+;
